@@ -47,40 +47,112 @@ If SMTP/IMAP are left blank, the app still works — document requests get logge
 4. **View** submitted documents (image/PDF preview + download) on the candidate's profile.
 5. **Edit** any auto-extracted field if the parser got something wrong — corrected fields are marked as fully confident.
 6. **Delete** a candidate to permanently remove their resume, documents, and request history.
+7. **Gemini quota/rate-limit errors** (HTTP 429) surface as a dismissible alert banner across the UI, not a silent failure or a raw stack trace — see `LLMQuotaExceededError` in `backend/app/services/llm/base.py` and `ToastContext` in `frontend/src/context/`.
 
 ## Architecture
 
+Everything runs in one Flask process: the API, the LLM calls, and a daemon thread that polls the mailbox on an interval. The React app is built once and served as static files by the same Flask app — there's no separate frontend server in production.
+
+### Data flow
+
 ```mermaid
-flowchart LR
-  subgraph Frontend [React SPA]
-    Upload[UploadPage]
-    Dash[Dashboard]
-    Profile[CandidateProfile]
-  end
-
-  subgraph Backend [Flask]
-    Routes[candidates routes]
-    Parser[ResumeParser]
-    Agent[DocumentRequestAgent]
-    Notify[SMTPNotificationService]
-    Ingest[EmailIngestionService]
-    Poller[Background inbox poller]
-  end
-
-  LLM[(Gemini via LangChain)]
-  DB[(SQLite)]
-  Mailbox[(SMTP/IMAP mailbox)]
-
-  Upload --> Routes --> Parser --> LLM
-  Profile --> Routes --> Agent --> LLM
-  Routes --> Notify --> Mailbox
-  Poller --> Ingest --> Mailbox
-  Ingest --> LLM
-  Routes --> DB
-  Ingest --> DB
+flowchart TD
+    A([HR uploads resume]) --> B["POST /candidates/upload"]
+    B --> C[LocalStorageService saves file to disk]
+    C --> D[resume_extractor: PDF/DOCX to raw text]
+    D --> E{Gemini: parse_resume_text}
+    E -->|success| F[(Candidate row: fields + confidence)]
+    E -->|429 / quota exceeded| G["status=failed, error_type=quota_exceeded"]
+    G --> H[["UI alert: quota exceeded"]]
+    F --> I([HR clicks Generate Message])
+    I --> J["POST /generate-document-request"]
+    J --> K{Gemini: draft message}
+    K -->|success| L[HR reviews / edits in browser]
+    K -->|429 / quota exceeded| H
+    L --> M([HR clicks Send Email])
+    M --> N["POST /request-documents"]
+    N --> O[NotificationService: SendGrid or SMTP]
+    O --> P[(DocumentRequest row)]
+    O --> Q([Candidate's inbox])
+    Q --> R([Candidate replies with PAN/Aadhaar])
+    R --> S[Background poller or Sync button: IMAP fetch]
+    S --> T{Gemini: classify attachments}
+    T --> U[LocalStorageService saves PAN/Aadhaar]
+    U --> F
+    F --> V([HR views documents on profile])
 ```
 
-Everything runs in one Flask process: the API, the LLM calls, and a daemon thread that polls the mailbox on an interval. The React app is built once and served as static files by the same Flask app — there's no separate frontend server in production.
+### High-level design
+
+```mermaid
+flowchart LR
+    subgraph Client [Browser]
+        UI["React SPA — Upload / Dashboard / Profile"]
+    end
+
+    subgraph Server ["Single Flask process (gunicorn)"]
+        Routes["candidates routes — REST JSON API"]
+        Services["Service layer — parsing, drafting,\nnotification, ingestion"]
+        Poller["Background thread — IMAP poller, every 300s"]
+    end
+
+    subgraph External ["Third-party services"]
+        Gemini[("Google Gemini, via LangChain")]
+        Mail[("SMTP / SendGrid / IMAP mailbox")]
+    end
+
+    subgraph Persistence
+        DB[(SQLite)]
+        Files[("Local filesystem /\npersistent volume")]
+    end
+
+    UI <-->|HTTPS JSON| Routes
+    Routes --> Services
+    Poller --> Services
+    Services --> Gemini
+    Services --> Mail
+    Services --> DB
+    Services --> Files
+```
+
+### Interfaces
+
+The service layer is built against abstract interfaces, not concrete providers — swapping Gemini, SendGrid, or local disk storage for something else means adding a class, not touching business logic.
+
+```mermaid
+classDiagram
+    class LLMClient {
+        <<interface>>
+        +complete_json(prompt, schema_hint, timeout) dict
+    }
+    class LangChainGeminiClient
+    LLMClient <|.. LangChainGeminiClient
+
+    class NotificationService {
+        <<interface>>
+        +send(channel, recipient, message, subject, candidate_id) SendResult
+    }
+    class StubNotificationService
+    class SMTPNotificationService
+    class SendGridNotificationService
+    NotificationService <|.. StubNotificationService
+    NotificationService <|.. SMTPNotificationService
+    NotificationService <|.. SendGridNotificationService
+    NotificationService ..> SendResult
+
+    class StorageService {
+        <<interface>>
+        +save(file, subfolder) str
+    }
+    class LocalStorageService
+    StorageService <|.. LocalStorageService
+
+    class SendResult {
+        +bool success
+        +str status
+        +str detail
+    }
+```
 
 ## Project structure
 
