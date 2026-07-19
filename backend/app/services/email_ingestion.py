@@ -18,15 +18,12 @@ logger = logging.getLogger(__name__)
 
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".pdf"}
 
-# Embedded in every outbound document-request subject/body (see candidates.py) so a
-# reply can be matched back to the exact candidate row, not just the sender's email —
-# two different candidates can share the same email address (typos, re-applications,
-# duplicate uploads), so email alone isn't a safe key for auto-attach.
-REFERENCE_RE = re.compile(r"\[Ref:\s*RP-(\d+)\]", re.IGNORECASE)
-
-
-def reference_tag(candidate_id: int) -> str:
-    return f"[Ref: RP-{candidate_id}]"
+# candidates.py sets Reply-To to a plus-addressed variant of the sending mailbox
+# (e.g. abattu97+rp1@gmail.com) — invisible in the readable message, but Gmail
+# (and most providers) deliver it to the normal inbox while preserving the tag
+# in the recipient headers of the reply. Lets a reply be matched back to the
+# exact candidate row even when two candidates share the same email address.
+PLUS_TAG_RE = re.compile(r"\+rp(\d+)@", re.IGNORECASE)
 
 
 def _decode_header_value(value: str | None) -> str:
@@ -45,25 +42,6 @@ def _decode_header_value(value: str | None) -> str:
 def _extract_email_address(from_header: str) -> str:
     match = re.search(r"[\w.+-]+@[\w.-]+\.\w+", from_header)
     return match.group(0).lower() if match else from_header.lower()
-
-
-def _extract_text_body(msg) -> str:
-    if msg.is_multipart():
-        parts = []
-        for part in msg.walk():
-            if part.get_content_type() == "text/plain" and part.get_content_disposition() != "attachment":
-                payload = part.get_payload(decode=True)
-                if payload:
-                    charset = part.get_content_charset() or "utf-8"
-                    parts.append(payload.decode(charset, errors="replace"))
-        return "\n".join(parts)
-
-    if msg.get_content_type() == "text/plain":
-        payload = msg.get_payload(decode=True)
-        if payload:
-            charset = msg.get_content_charset() or "utf-8"
-            return payload.decode(charset, errors="replace")
-    return ""
 
 
 class EmailIngestionService:
@@ -96,7 +74,7 @@ class EmailIngestionService:
 
         # Group by email — searching once per unique address (rather than once per
         # candidate row) means two candidates sharing an email don't get searched
-        # twice, and lets _process_message disambiguate between them by reference tag.
+        # twice, and lets _process_message disambiguate between them by plus-tag.
         by_email: dict[str, list[Candidate]] = {}
         for candidate in candidates:
             by_email.setdefault(candidate.email.lower(), []).append(candidate)
@@ -129,19 +107,20 @@ class EmailIngestionService:
 
         return results
 
-    def _resolve_candidate(self, candidates: list[Candidate], subject: str, body: str) -> Candidate | None:
+    def _resolve_candidate(self, candidates: list[Candidate], msg) -> Candidate | None:
         """Pick the exact candidate a reply belongs to.
 
-        Same email address can belong to more than one candidate row, so prefer the
-        [Ref: RP-<id>] tag embedded in the original outbound message (subject and
-        body both carry it, in case a client mangles one). Only fall back to "the one
-        candidate with this email" when it's unambiguous; otherwise refuse to guess.
+        Same email address can belong to more than one candidate row, so prefer
+        the +rpN plus-address tag carried in the reply's recipient headers (see
+        PLUS_TAG_RE above). Only fall back to "the one candidate with this
+        email" when it's unambiguous; otherwise refuse to guess.
         """
-        for text in (subject, body):
-            match = REFERENCE_RE.search(text or "")
-            if match:
-                target_id = int(match.group(1))
-                return next((c for c in candidates if c.id == target_id), None)
+        for header in ("Delivered-To", "To", "X-Original-To", "Envelope-To"):
+            for value in msg.get_all(header, []):
+                match = PLUS_TAG_RE.search(_decode_header_value(value))
+                if match:
+                    target_id = int(match.group(1))
+                    return next((c for c in candidates if c.id == target_id), None)
 
         if len(candidates) == 1:
             return candidates[0]
@@ -156,16 +135,14 @@ class EmailIngestionService:
         raw = msg_data[0][1]
         msg = email.message_from_bytes(raw)
         sender = _extract_email_address(_decode_header_value(msg.get("From")))
-        subject = _decode_header_value(msg.get("Subject"))
-        body = _extract_text_body(msg)
 
-        candidate = self._resolve_candidate(candidate_group, subject, body)
+        candidate = self._resolve_candidate(candidate_group, msg)
         if candidate is None:
             mail.store(msg_id, "+FLAGS", "\\Seen")
             return {
                 "status": "ambiguous",
                 "detail": (
-                    f"{len(candidate_group)} candidates share {sender} and no reference tag "
+                    f"{len(candidate_group)} candidates share {sender} and no reply-to tag "
                     "was found in the reply — skipped to avoid attaching to the wrong profile"
                 ),
             }

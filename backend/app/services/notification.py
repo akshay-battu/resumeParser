@@ -21,6 +21,20 @@ class SendResult:
     detail: str = ""
 
 
+def plus_address(base_email: str, tag: str) -> str:
+    """abattu97@gmail.com + 'rp1' -> abattu97+rp1@gmail.com.
+
+    Gmail (and most major providers) deliver plus-addressed mail to the base
+    inbox unchanged while preserving the full address in headers — lets a reply
+    carry a candidate reference invisibly, with nothing appended to the visible
+    subject/body.
+    """
+    local, _, domain = base_email.partition("@")
+    if not domain:
+        return base_email
+    return f"{local}+{tag}@{domain}"
+
+
 class NotificationService:
     """Base notification interface."""
 
@@ -30,6 +44,7 @@ class NotificationService:
         recipient: str,
         message: str,
         subject: str = "Document Request — ResumeParser KYC",
+        candidate_id: int | None = None,
     ) -> SendResult:
         raise NotImplementedError
 
@@ -43,6 +58,7 @@ class StubNotificationService(NotificationService):
         recipient: str,
         message: str,
         subject: str = "Document Request — ResumeParser KYC",
+        candidate_id: int | None = None,
     ) -> SendResult:
         logger.info(
             "[NotificationService stub] channel=%s recipient=%s subject=%s message=%s",
@@ -77,6 +93,7 @@ class SMTPNotificationService(NotificationService):
         recipient: str,
         message: str,
         subject: str = "Document Request — ResumeParser KYC",
+        candidate_id: int | None = None,
     ) -> SendResult:
         if channel != "email":
             return SendResult(success=False, status="stub", detail=f"Channel {channel} not supported via SMTP")
@@ -89,6 +106,8 @@ class SMTPNotificationService(NotificationService):
             msg["Subject"] = subject
             msg["From"] = formataddr((self.from_name, self.from_addr)) if self.from_name else self.from_addr
             msg["To"] = recipient
+            if candidate_id is not None:
+                msg["Reply-To"] = plus_address(self.from_addr, f"rp{candidate_id}")
             msg.attach(MIMEText(message, "plain", "utf-8"))
 
             with force_ipv4(), smtplib.SMTP(self.host, self.port, timeout=30) as server:
@@ -129,6 +148,7 @@ class SendGridNotificationService(NotificationService):
         recipient: str,
         message: str,
         subject: str = "Document Request — ResumeParser KYC",
+        candidate_id: int | None = None,
     ) -> SendResult:
         if channel != "email":
             return SendResult(success=False, status="stub", detail=f"Channel {channel} not supported via SendGrid")
@@ -140,14 +160,16 @@ class SendGridNotificationService(NotificationService):
         if self.from_name:
             from_field["name"] = self.from_name
 
-        payload = json.dumps(
-            {
-                "personalizations": [{"to": [{"email": recipient}]}],
-                "from": from_field,
-                "subject": subject,
-                "content": [{"type": "text/plain", "value": message}],
-            }
-        ).encode("utf-8")
+        body = {
+            "personalizations": [{"to": [{"email": recipient}]}],
+            "from": from_field,
+            "subject": subject,
+            "content": [{"type": "text/plain", "value": message}],
+        }
+        if candidate_id is not None:
+            body["reply_to"] = {"email": plus_address(self.from_addr, f"rp{candidate_id}")}
+
+        payload = json.dumps(body).encode("utf-8")
 
         req = urllib.request.Request(
             "https://api.sendgrid.com/v3/mail/send",

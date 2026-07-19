@@ -1,4 +1,5 @@
 import io
+import json
 import urllib.error
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -33,10 +34,11 @@ MOCK_PARSE_RESULT = {
 }
 
 
-def _multipart_reply(sender: str, subject: str) -> bytes:
+def _multipart_reply(sender: str, to: str = "hr@test.com") -> bytes:
     return (
         f"From: {sender}\r\n".encode()
-        + f"Subject: {subject}\r\n".encode()
+        + f"Delivered-To: {to}\r\n".encode()
+        + b"Subject: Re: Document Request\r\n"
         + b"Content-Type: multipart/mixed; boundary=\"boundary\"\r\n\r\n"
         b"--boundary\r\n"
         b"Content-Type: text/plain\r\n\r\n"
@@ -107,8 +109,7 @@ def test_document_request_generation(client, sample_pdf):
 
     assert response.status_code == 200
     body = response.get_json()
-    assert body["message"].startswith(generated["message"])
-    assert f"[Ref: RP-{candidate_id}]" in body["message"]
+    assert body["message"] == generated["message"]
     assert body["channel"] == "email"
 
     logged = DocumentRequest.query.filter_by(candidate_id=candidate_id).first()
@@ -302,11 +303,15 @@ def test_smtp_notification_service():
 
     with patch("smtplib.SMTP") as mock_smtp:
         instance = mock_smtp.return_value.__enter__.return_value
-        res = service.send("email", "recipient@test.com", "Hello candidate", "Verification")
+        res = service.send("email", "recipient@test.com", "Hello candidate", "Verification", candidate_id=7)
 
         assert res.success is True
         assert res.status == "sent"
         instance.sendmail.assert_called_once()
+        sent_message = instance.sendmail.call_args[0][2]
+        assert "Reply-To: from+rp7@test.com" in sent_message
+        # The visible message carries no bracketed tag — it's only in the header.
+        assert "[Ref:" not in sent_message
 
 
 def test_sendgrid_takes_priority_over_smtp():
@@ -324,11 +329,14 @@ def test_sendgrid_notification_service_sends():
     mock_response.read.return_value = b""
     mock_response.__enter__.return_value = mock_response
     with patch("urllib.request.urlopen", return_value=mock_response) as mock_urlopen:
-        res = service.send("email", "recipient@test.com", "Hello candidate", "Verification")
+        res = service.send("email", "recipient@test.com", "Hello candidate", "Verification", candidate_id=7)
 
     assert res.success is True
     assert res.status == "sent"
-    mock_urlopen.assert_called_once()
+    sent_request = mock_urlopen.call_args[0][0]
+    sent_body = json.loads(sent_request.data)
+    assert sent_body["reply_to"]["email"] == "hr+rp7@test.com"
+    assert sent_body["content"][0]["value"] == "Hello candidate"
 
 
 def test_sendgrid_notification_service_handles_api_error():
@@ -388,7 +396,7 @@ def test_email_ingestion_service(app):
         mock_imap.search.return_value = ("OK", [b"1"])
         mock_imap.fetch.return_value = (
             "OK",
-            [(None, _multipart_reply("priya@test.com", "Re: Document Request"))],
+            [(None, _multipart_reply("priya@test.com"))],
         )
 
         results = service.poll_inbox()
@@ -406,10 +414,11 @@ def test_email_ingestion_service(app):
             assert updated.aadhaar_path == f"documents/{candidate_id}/email/aadhaar.png"
 
 
-def test_email_ingestion_disambiguates_same_email_via_reference_tag(app):
+def test_email_ingestion_disambiguates_same_email_via_reply_to_tag(app):
     """Two candidates sharing an email must not be confused — the reply's
-    reference tag (embedded in the original outbound subject/body) decides
-    which candidate row gets the attachment, not email address alone."""
+    plus-addressed recipient (invisible in the readable message, carried in
+    headers via Reply-To) decides which candidate row gets the attachment,
+    not email address alone."""
     config = {
         "IMAP_HOST": "imap.test.com",
         "IMAP_PORT": "993",
@@ -437,7 +446,7 @@ def test_email_ingestion_disambiguates_same_email_via_reference_tag(app):
         mock_imap.search.return_value = ("OK", [b"1"])
         mock_imap.fetch.return_value = (
             "OK",
-            [(None, _multipart_reply("amit@test.com", f"Re: Document Request [Ref: RP-{c2_id}]"))],
+            [(None, _multipart_reply("amit@test.com", to=f"hr+rp{c2_id}@test.com"))],
         )
 
         results = service.poll_inbox()
@@ -455,9 +464,10 @@ def test_email_ingestion_disambiguates_same_email_via_reference_tag(app):
         assert updated.pan_path == f"documents/{c2_id}/email/pan.png"
 
 
-def test_email_ingestion_skips_ambiguous_reply_without_reference_tag(app):
-    """Same-email duplicate candidates, but the reply carries no reference tag —
-    the service must refuse to guess rather than risk attaching to the wrong one."""
+def test_email_ingestion_skips_ambiguous_reply_without_reply_to_tag(app):
+    """Same-email duplicate candidates, but the reply carries no plus-address
+    tag — the service must refuse to guess rather than risk attaching to the
+    wrong one."""
     config = {
         "IMAP_HOST": "imap.test.com",
         "IMAP_PORT": "993",
@@ -482,7 +492,7 @@ def test_email_ingestion_skips_ambiguous_reply_without_reference_tag(app):
         mock_imap.search.return_value = ("OK", [b"1"])
         mock_imap.fetch.return_value = (
             "OK",
-            [(None, _multipart_reply("amit@test.com", "Re: Document Request"))],
+            [(None, _multipart_reply("amit@test.com"))],
         )
 
         results = service.poll_inbox()

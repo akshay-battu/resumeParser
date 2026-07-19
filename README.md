@@ -43,7 +43,7 @@ If SMTP/IMAP are left blank, the app still works — document requests get logge
 
 1. **Upload** a resume (PDF/DOCX) → text extracted → sent to Gemini → structured fields (name, email, company, skills, …) with confidence scores, stored per candidate.
 2. **Generate** a personalized PAN/Aadhaar request message (LLM-drafted), review/edit it, then **send** it by email.
-3. **Candidate replies** with attachments → a background poller (or the manual "Sync Email Inbox" button) reads the inbox, classifies attachments via LLM, and auto-attaches them to the right candidate — no manual upload needed. Manual upload is also available as a fallback. Every request email carries a hidden `[Ref: RP-<id>]` tag, so replies match back to the exact candidate row even if two candidates share the same email address.
+3. **Candidate replies** with attachments → a background poller (or the manual "Sync Email Inbox" button) reads the inbox, classifies attachments via LLM, and auto-attaches them to the right candidate — no manual upload needed. Manual upload is also available as a fallback. Every request email sets an invisible Reply-To (a plus-addressed variant of the sending mailbox, e.g. `hr+rp7@gmail.com`), so replies match back to the exact candidate row even if two candidates share the same email address — nothing is appended to the visible subject/body.
 4. **View** submitted documents (image/PDF preview + download) on the candidate's profile.
 5. **Edit** any auto-extracted field if the parser got something wrong — corrected fields are marked as fully confident.
 6. **Delete** a candidate to permanently remove their resume, documents, and request history.
