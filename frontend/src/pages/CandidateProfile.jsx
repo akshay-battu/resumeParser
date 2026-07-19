@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { deleteCandidate, generateDocumentRequest, getCandidate, sendDocumentRequest, submitDocuments } from '../api/client'
+import { deleteCandidate, generateDocumentRequest, getCandidate, sendDocumentRequest, submitDocuments, updateCandidate } from '../api/client'
 import ConfidenceBar from '../components/ConfidenceBar'
 import DocumentFileInput from '../components/DocumentFileInput'
 import DocumentViewer from '../components/DocumentViewer'
@@ -22,6 +22,10 @@ export default function CandidateProfile() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [deleteLoading, setDeleteLoading] = useState(false)
+  const [editMode, setEditMode] = useState(false)
+  const [editForm, setEditForm] = useState(null)
+  const [saveLoading, setSaveLoading] = useState(false)
+  const [saveError, setSaveError] = useState('')
   const [generateLoading, setGenerateLoading] = useState(false)
   const [sendLoading, setSendLoading] = useState(false)
   const [requestMessage, setRequestMessage] = useState('')
@@ -118,6 +122,69 @@ export default function CandidateProfile() {
     }
   }
 
+  const handleStartEdit = () => {
+    setSaveError('')
+    setEditForm({
+      name: candidate.name || '',
+      email: candidate.email || '',
+      phone: candidate.phone || '',
+      company: candidate.company || '',
+      designation: candidate.designation || '',
+      skillsText: (candidate.skills || []).join(', '),
+    })
+    setEditMode(true)
+  }
+
+  const handleCancelEdit = () => {
+    setEditMode(false)
+    setEditForm(null)
+    setSaveError('')
+  }
+
+  const handleSaveEdit = async () => {
+    setSaveLoading(true)
+    setSaveError('')
+    try {
+      const newSkills = editForm.skillsText
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+      const candidates = {
+        name: editForm.name.trim(),
+        email: editForm.email.trim(),
+        phone: editForm.phone.trim(),
+        company: editForm.company.trim(),
+        designation: editForm.designation.trim(),
+        skills: newSkills,
+      }
+      // Only send fields that actually changed, so untouched fields keep
+      // their original LLM confidence instead of being marked as reviewed.
+      const changed = {}
+      for (const [key, value] of Object.entries(candidates)) {
+        const original = key === 'skills' ? (candidate.skills || []) : candidate[key] || ''
+        const isSame = key === 'skills'
+          ? JSON.stringify(original) === JSON.stringify(value)
+          : original === value
+        if (!isSame) changed[key] = value
+      }
+
+      if (Object.keys(changed).length === 0) {
+        setEditMode(false)
+        setEditForm(null)
+        return
+      }
+
+      const updated = await updateCandidate(id, changed)
+      setCandidate(updated)
+      setEditMode(false)
+      setEditForm(null)
+    } catch (err) {
+      setSaveError(err.response?.data?.error || err.message)
+    } finally {
+      setSaveLoading(false)
+    }
+  }
+
   if (loading) {
     return (
       <Layout>
@@ -182,36 +249,97 @@ export default function CandidateProfile() {
 
       <div className="grid gap-6 lg:grid-cols-2">
         <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="mb-4 text-lg font-semibold">Extracted Profile</h2>
-          <dl className="space-y-4">
-            {FIELDS.map(({ key, label }) => (
-              <div key={key}>
-                <dt className="text-xs uppercase tracking-wide text-slate-500">{label}</dt>
-                <dd className="mt-1 font-medium">{candidate[key] || '—'}</dd>
-                <ConfidenceBar value={confidence[key]} />
+          <div className="mb-4 flex items-center justify-between">
+            <h2 className="text-lg font-semibold">Extracted Profile</h2>
+            {!editMode && (
+              <button
+                type="button"
+                onClick={handleStartEdit}
+                className="text-sm font-medium text-indigo-600 hover:underline"
+              >
+                Edit
+              </button>
+            )}
+          </div>
+
+          {saveError && (
+            <p className="mb-3 text-sm text-red-600">{saveError}</p>
+          )}
+
+          {editMode ? (
+            <div className="space-y-4">
+              {FIELDS.map(({ key, label }) => (
+                <div key={key}>
+                  <label className="text-xs uppercase tracking-wide text-slate-500">{label}</label>
+                  <input
+                    type="text"
+                    value={editForm[key]}
+                    onChange={(e) => setEditForm({ ...editForm, [key]: e.target.value })}
+                    className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none"
+                  />
+                </div>
+              ))}
+              <div>
+                <label className="text-xs uppercase tracking-wide text-slate-500">
+                  Skills (comma-separated)
+                </label>
+                <input
+                  type="text"
+                  value={editForm.skillsText}
+                  onChange={(e) => setEditForm({ ...editForm, skillsText: e.target.value })}
+                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none"
+                />
               </div>
-            ))}
-            <div>
-              <dt className="text-xs uppercase tracking-wide text-slate-500">Skills</dt>
-              <dd className="mt-2 flex flex-wrap gap-2">
-                {(candidate.skills || []).length ? (
-                  candidate.skills.map((skill) => (
-                    <span
-                      key={skill}
-                      className="rounded-full bg-indigo-50 px-3 py-1 text-xs text-indigo-700"
-                    >
-                      {skill}
-                    </span>
-                  ))
-                ) : (
-                  <span className="text-slate-500">—</span>
-                )}
-              </dd>
-              <div className="mt-2">
-                <ConfidenceBar value={confidence.skills} />
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={handleSaveEdit}
+                  disabled={saveLoading}
+                  className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {saveLoading ? 'Saving...' : 'Save Changes'}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCancelEdit}
+                  disabled={saveLoading}
+                  className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
               </div>
             </div>
-          </dl>
+          ) : (
+            <dl className="space-y-4">
+              {FIELDS.map(({ key, label }) => (
+                <div key={key}>
+                  <dt className="text-xs uppercase tracking-wide text-slate-500">{label}</dt>
+                  <dd className="mt-1 font-medium">{candidate[key] || '—'}</dd>
+                  <ConfidenceBar value={confidence[key]} />
+                </div>
+              ))}
+              <div>
+                <dt className="text-xs uppercase tracking-wide text-slate-500">Skills</dt>
+                <dd className="mt-2 flex flex-wrap gap-2">
+                  {(candidate.skills || []).length ? (
+                    candidate.skills.map((skill) => (
+                      <span
+                        key={skill}
+                        className="rounded-full bg-indigo-50 px-3 py-1 text-xs text-indigo-700"
+                      >
+                        {skill}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-slate-500">—</span>
+                  )}
+                </dd>
+                <div className="mt-2">
+                  <ConfidenceBar value={confidence.skills} />
+                </div>
+              </div>
+            </dl>
+          )}
 
           {candidate.status === 'failed' && candidate.raw_text_snippet && (
             <div className="mt-6 rounded-lg bg-slate-50 p-4">

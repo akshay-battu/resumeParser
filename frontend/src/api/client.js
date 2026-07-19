@@ -34,6 +34,11 @@ export async function deleteCandidate(id) {
   return data
 }
 
+export async function updateCandidate(id, fields) {
+  const { data } = await api.patch(`/candidates/${id}`, fields)
+  return data
+}
+
 export async function generateDocumentRequest(id, channel = 'email') {
   const { data } = await api.post(`/candidates/${id}/generate-document-request`, { channel })
   return data

@@ -138,6 +138,34 @@ def get_candidate(candidate_id: int):
     return jsonify(candidate.to_detail_dict())
 
 
+EDITABLE_FIELDS = {"name", "email", "phone", "company", "designation", "skills"}
+
+
+@candidates_bp.route("/<int:candidate_id>", methods=["PATCH"])
+def update_candidate(candidate_id: int):
+    candidate = db.session.get(Candidate, candidate_id)
+    if not candidate:
+        return jsonify({"error": "Candidate not found"}), 404
+
+    body = request.get_json(silent=True) or {}
+    updates = {k: v for k, v in body.items() if k in EDITABLE_FIELDS}
+    if not updates:
+        return jsonify({"error": "No editable fields provided"}), 400
+
+    if "skills" in updates and not isinstance(updates["skills"], list):
+        return jsonify({"error": "skills must be a list of strings"}), 400
+
+    confidence = dict(candidate.field_confidence or {})
+    for field, value in updates.items():
+        setattr(candidate, field, value)
+        # Manually corrected fields are as certain as it gets.
+        confidence[field] = 1.0
+    candidate.field_confidence = confidence
+
+    db.session.commit()
+    return jsonify(candidate.to_detail_dict())
+
+
 @candidates_bp.route("/<int:candidate_id>", methods=["DELETE"])
 def delete_candidate(candidate_id: int):
     candidate = db.session.get(Candidate, candidate_id)

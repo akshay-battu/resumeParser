@@ -176,6 +176,38 @@ def test_view_submitted_documents(client, sample_pdf):
     assert pan_resp.mimetype.startswith("image/")
 
 
+def test_update_candidate_corrects_fields_and_confidence(client, sample_pdf):
+    mock_llm = MagicMock()
+    with patch("app.routes.candidates.get_llm_client", return_value=mock_llm), patch(
+        "app.routes.candidates.parse_resume_text", return_value=MOCK_PARSE_RESULT
+    ):
+        upload = client.post(
+            "/candidates/upload",
+            data={"resume": (sample_pdf, "resume.pdf")},
+            content_type="multipart/form-data",
+        )
+    candidate_id = upload.get_json()["id"]
+
+    response = client.patch(
+        f"/candidates/{candidate_id}",
+        json={"name": "Priya S. Sharma", "skills": ["Python", "Go"]},
+    )
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["name"] == "Priya S. Sharma"
+    assert body["skills"] == ["Python", "Go"]
+    assert body["confidence"]["name"] == 1.0
+    assert body["confidence"]["skills"] == 1.0
+    # Untouched field keeps its original LLM confidence.
+    assert body["confidence"]["email"] == 0.98
+
+    invalid = client.patch(f"/candidates/{candidate_id}", json={"skills": "not-a-list"})
+    assert invalid.status_code == 400
+
+    empty = client.patch(f"/candidates/{candidate_id}", json={"unknown_field": "x"})
+    assert empty.status_code == 400
+
+
 def test_delete_candidate_removes_record_and_files(client, sample_pdf):
     mock_llm = MagicMock()
     with patch("app.routes.candidates.get_llm_client", return_value=mock_llm), patch(
