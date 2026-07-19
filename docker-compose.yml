@@ -8,38 +8,5 @@ services:
     environment:
       CORS_ORIGINS: http://localhost:5173,http://localhost:5000
     volumes:
-      - traqcheck_uploads:/app/backend/uploads
-      - traqcheck_db:/app/backend/data
       - ./backend:/app/backend
     restart: unless-stopped
-
-  # Optional: SMTP capture for testing without touching a real inbox.
-  # Not used by default — the app sends real email via the SMTP_* values in .env.
-  # To route through this instead: set SMTP_HOST=mailhog / SMTP_PORT=1025 /
-  # SMTP_USE_TLS=false in .env, then run `docker-compose --profile mailhog up --build`.
-  # Note: MailHog only captures outbound mail — it can't receive real replies, so the
-  # IMAP auto-attach listener needs the real SMTP+IMAP path, not this profile.
-  mailhog:
-    image: mailhog/mailhog:latest
-    ports:
-      - "1025:1025"   # SMTP
-      - "8025:8025"   # Web UI — view sent emails at http://localhost:8025
-    restart: unless-stopped
-    profiles:
-      - mailhog
-
-  # Optional: run frontend in dev mode alongside Docker backend
-  frontend-dev:
-    image: node:20-alpine
-    working_dir: /app
-    volumes:
-      - ./frontend:/app
-    ports:
-      - "5173:5173"
-    command: sh -c "npm ci && npm run dev -- --host 0.0.0.0"
-    profiles:
-      - dev
-
-volumes:
-  traqcheck_uploads:
-  traqcheck_db:

@@ -11,3 +11,4 @@ backend/uploads/
 *.db
 .DS_Store
 frontend/dist/
+backend/app/static/

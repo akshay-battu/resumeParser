@@ -9,16 +9,11 @@ RUN npm run build
 FROM python:3.11-slim AS runtime
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc libpq-dev \
-    && rm -rf /var/lib/apt/lists/*
-
 COPY backend/requirements.txt ./backend/
 RUN pip install --no-cache-dir -r backend/requirements.txt
 
 COPY backend/ ./backend/
 COPY --from=frontend-build /app/frontend/dist ./backend/app/static/
-COPY .env.example ./.env.example
 
 WORKDIR /app/backend
 RUN mkdir -p uploads
