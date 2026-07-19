@@ -21,7 +21,11 @@ RUN mkdir -p uploads
 ENV FLASK_ENV=production
 ENV UPLOAD_FOLDER=/app/backend/uploads
 ENV DATABASE_URL=sqlite:////app/backend/traqcheck.db
+ENV PORT=5000
 
 EXPOSE 5000
 
-CMD ["gunicorn", "run:app", "--bind", "0.0.0.0:5000", "--workers", "2", "--timeout", "120"]
+# Shell form so $PORT expands — Railway (and similar PaaS hosts) inject their own
+# port at runtime and route traffic to it; hardcoding 5000 would make the app
+# unreachable there even though it works fine locally via docker-compose.
+CMD gunicorn run:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120
