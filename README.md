@@ -2,8 +2,6 @@
 
 Upload a candidate's resume, extract structured profile data with an LLM, and automatically request — then collect — their PAN and Aadhaar identity documents by email.
 
-> **Demo disclaimer:** This is a hiring-assignment demo, not a production KYC system. Do not upload real government ID documents. All sample data is fictional.
-
 ## Live deployment
 
 **https://resumeparser-production-f5cd.up.railway.app**
@@ -193,4 +191,4 @@ pytest -q
 
 ## License
 
-MIT — assignment submission.
+MIT
