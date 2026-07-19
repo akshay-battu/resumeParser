@@ -4,6 +4,12 @@ Upload a candidate's resume, extract structured profile data with an LLM, and au
 
 > **Demo disclaimer:** This is a hiring-assignment demo, not a production KYC system. Do not upload real government ID documents. All sample data is fictional.
 
+## Live deployment
+
+**https://resumeparser-production-f5cd.up.railway.app**
+
+Deployed on Railway, built from this repo's `Dockerfile` — same container image as local Docker Compose, just with `DATABASE_URL`/`UPLOAD_FOLDER` pointed at a persistent volume mounted at `/data` (Railway's filesystem is otherwise ephemeral) and `CORS_ORIGINS` set to the deployed domain. Pushing to `main` auto-redeploys via the connected GitHub repo.
+
 ## Quick start (Docker Compose)
 
 **Prerequisites:** Docker Desktop, a [Gemini API key](https://aistudio.google.com/), and a mailbox with SMTP + IMAP access (e.g. Gmail with an [App Password](https://myaccount.google.com/apppasswords)).
