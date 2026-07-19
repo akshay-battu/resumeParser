@@ -1,8 +1,24 @@
 import axios from 'axios'
+import { notifyToast } from './toastBridge'
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL || '',
 })
+
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const status = error.response?.status
+    const errorType = error.response?.data?.error_type
+    if (status === 429 || errorType === 'quota_exceeded') {
+      notifyToast(
+        error.response?.data?.error || 'Gemini API quota exceeded — please try again later.',
+        'warning',
+      )
+    }
+    return Promise.reject(error)
+  },
+)
 
 export async function uploadResume(file, onProgress) {
   const form = new FormData()

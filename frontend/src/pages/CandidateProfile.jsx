@@ -6,6 +6,7 @@ import DocumentFileInput from '../components/DocumentFileInput'
 import DocumentViewer from '../components/DocumentViewer'
 import Layout from '../components/Layout'
 import StatusBadge from '../components/StatusBadge'
+import { useToast } from '../context/ToastContext'
 
 const FIELDS = [
   { key: 'name', label: 'Name' },
@@ -18,6 +19,7 @@ const FIELDS = [
 export default function CandidateProfile() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const { showToast } = useToast()
   const [candidate, setCandidate] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -47,6 +49,12 @@ export default function CandidateProfile() {
         if (latest?.message && !requestMessage) {
           setRequestMessage(latest.message)
           setRequestMeta(latest)
+        }
+        // Resume parsing hit a quota-exhausted API key — this arrives embedded
+        // in an otherwise-successful response, so the axios interceptor (which
+        // only fires on failed requests) never sees it. Surface it here instead.
+        if (data.confidence?.error_type === 'quota_exceeded') {
+          showToast('Resume parsing failed — Gemini API quota exceeded. Try again later.', 'warning')
         }
       })
       .catch((err) => setError(err.response?.data?.error || err.message))

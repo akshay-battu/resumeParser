@@ -9,7 +9,7 @@ from app.models.candidate import Candidate
 from app.models.document_request import DocumentRequest
 from app.services.document_agent import DocumentRequestAgent
 from app.services.email_ingestion import EmailIngestionService
-from app.services.llm.base import LLMUnavailableError
+from app.services.llm.base import LLMQuotaExceededError, LLMUnavailableError
 from app.services.llm.factory import get_llm_client
 from app.services.notification import get_notification_service
 from app.services.resume_extractor import ResumeExtractionError, extract_text
@@ -82,6 +82,9 @@ def upload_resume():
             candidate.status = "parsed" if any(
                 [candidate.name, candidate.email, candidate.company]
             ) else "failed"
+        except LLMQuotaExceededError as exc:
+            candidate.status = "failed"
+            candidate.field_confidence = {"error": str(exc), "error_type": "quota_exceeded"}
         except LLMUnavailableError as exc:
             candidate.status = "failed"
             candidate.field_confidence = {"error": str(exc)}
@@ -100,6 +103,13 @@ def sync_inbox():
     """Poll IMAP inbox and auto-attach document replies to candidate profiles."""
     try:
         llm = get_llm_client(current_app.config["LLM_PROVIDER"], current_app.config)
+    except LLMQuotaExceededError as exc:
+        return jsonify({
+            "error": "Gemini API quota exceeded — please try again later.",
+            "error_type": "quota_exceeded",
+            "detail": str(exc),
+            "results": [],
+        }), 429
     except LLMUnavailableError as exc:
         return jsonify({"error": str(exc), "results": []}), 503
 
@@ -233,6 +243,13 @@ def generate_document_request(candidate_id: int):
             designation=candidate.designation,
             channel=channel,
         )
+    except LLMQuotaExceededError as exc:
+        return jsonify({
+            "error": "Gemini API quota exceeded — please try again later.",
+            "error_type": "quota_exceeded",
+            "detail": str(exc),
+            "status": "failed",
+        }), 429
     except LLMUnavailableError as exc:
         return jsonify({"error": str(exc), "status": "failed"}), 503
 

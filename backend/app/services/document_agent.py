@@ -1,6 +1,6 @@
 import logging
 
-from app.services.llm.base import LLMClient, LLMUnavailableError
+from app.services.llm.base import LLMClient, LLMQuotaExceededError, LLMUnavailableError
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +75,11 @@ class DocumentRequestAgent:
                 if message:
                     return message
                 last_error = LLMUnavailableError("Empty message from LLM")
+            except LLMQuotaExceededError:
+                # Don't retry or fall back — quota exhaustion won't clear up on
+                # the next attempt, and the caller needs the specific error to
+                # surface an actionable message instead of a generic template.
+                raise
             except LLMUnavailableError as exc:
                 last_error = exc
                 logger.warning("Document request attempt %s failed: %s", attempt + 1, exc)

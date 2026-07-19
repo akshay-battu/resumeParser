@@ -4,7 +4,9 @@ import re
 from langchain_core.messages import HumanMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 
-from app.services.llm.base import LLMClient, LLMUnavailableError
+from app.services.llm.base import LLMClient, LLMQuotaExceededError, LLMUnavailableError
+
+QUOTA_SIGNALS = ("429", "resource_exhausted", "rate limit", "quota")
 
 
 def _extract_text(content) -> str:
@@ -67,4 +69,7 @@ class LangChainGeminiClient(LLMClient):
                 import ast
                 return ast.literal_eval(text)
         except Exception as exc:
-            raise LLMUnavailableError(str(exc)) from exc
+            message = str(exc)
+            if any(signal in message.lower() for signal in QUOTA_SIGNALS):
+                raise LLMQuotaExceededError(message) from exc
+            raise LLMUnavailableError(message) from exc

@@ -4,7 +4,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError
 
-from app.services.llm.base import LLMClient, LLMUnavailableError
+from app.services.llm.base import LLMClient, LLMQuotaExceededError, LLMUnavailableError
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +113,12 @@ def parse_resume_text(raw_text: str, llm: LLMClient) -> dict[str, Any]:
                 "skills": parsed.skills,
                 "confidence": parsed.confidence.model_dump(),
             }
+        except LLMQuotaExceededError:
+            # Don't retry a quota exhaustion — it won't succeed on the next
+            # attempt either, and the caller needs the specific error to
+            # surface an actionable message instead of a silent low-confidence
+            # fallback.
+            raise
         except (ValidationError, LLMUnavailableError) as exc:
             last_error = exc
             logger.warning("Resume parse attempt %s failed: %s", attempt + 1, exc)

@@ -4,11 +4,13 @@ import urllib.error
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from app.extensions import db
 from app.models.candidate import Candidate
 from app.models.document_request import DocumentRequest
 from app.services.email_ingestion import EmailIngestionService
-from app.services.llm.base import LLMUnavailableError
+from app.services.llm.base import LLMQuotaExceededError, LLMUnavailableError
 from app.services.llm.langchain_gemini import LangChainGeminiClient
 from app.services.notification import (
     SendGridNotificationService,
@@ -288,6 +290,65 @@ def test_langchain_gemini_client():
     res = client.complete_json("test prompt", "{}")
     assert res == {"name": "Test Person", "email": "test@test.com"}
     mock_llm.invoke.assert_called_once()
+
+
+def test_langchain_gemini_client_raises_quota_exceeded_on_429():
+    mock_llm = MagicMock()
+    mock_llm.invoke.side_effect = Exception("429 RESOURCE_EXHAUSTED: quota exceeded, retry in 26s")
+
+    client = LangChainGeminiClient(api_key="fake-key")
+    client.llm = mock_llm
+
+    with pytest.raises(LLMQuotaExceededError):
+        client.complete_json("test prompt", "{}")
+
+
+def test_langchain_gemini_client_generic_failure_stays_generic():
+    mock_llm = MagicMock()
+    mock_llm.invoke.side_effect = Exception("connection reset by peer")
+
+    client = LangChainGeminiClient(api_key="fake-key")
+    client.llm = mock_llm
+
+    with pytest.raises(LLMUnavailableError) as exc_info:
+        client.complete_json("test prompt", "{}")
+    assert not isinstance(exc_info.value, LLMQuotaExceededError)
+
+
+def test_upload_marks_quota_exceeded_distinctly(client, sample_pdf):
+    mock_llm = MagicMock()
+    mock_llm.complete_json.side_effect = LLMQuotaExceededError("429 RESOURCE_EXHAUSTED")
+    with patch("app.routes.candidates.get_llm_client", return_value=mock_llm):
+        upload = client.post(
+            "/candidates/upload",
+            data={"resume": (sample_pdf, "resume.pdf")},
+            content_type="multipart/form-data",
+        )
+    candidate_id = upload.get_json()["id"]
+
+    detail = client.get(f"/candidates/{candidate_id}", headers={"Accept": "application/json"})
+    body = detail.get_json()
+    assert body["status"] == "failed"
+    assert body["confidence"]["error_type"] == "quota_exceeded"
+
+
+def test_generate_document_request_returns_429_on_quota_exceeded(client, sample_pdf):
+    mock_llm = MagicMock()
+    with patch("app.routes.candidates.get_llm_client", return_value=mock_llm), patch(
+        "app.routes.candidates.parse_resume_text", return_value=MOCK_PARSE_RESULT
+    ):
+        upload = client.post(
+            "/candidates/upload",
+            data={"resume": (sample_pdf, "resume.pdf")},
+            content_type="multipart/form-data",
+        )
+    candidate_id = upload.get_json()["id"]
+
+    with patch("app.routes.candidates.get_llm_client", side_effect=LLMQuotaExceededError("429")):
+        response = client.post(f"/candidates/{candidate_id}/generate-document-request")
+
+    assert response.status_code == 429
+    assert response.get_json()["error_type"] == "quota_exceeded"
 
 
 def test_smtp_notification_service():
