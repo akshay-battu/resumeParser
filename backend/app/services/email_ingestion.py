@@ -11,6 +11,7 @@ from app.extensions import db
 from app.models.candidate import Candidate
 from app.services.attachment_classifier import classify_attachments
 from app.services.llm.base import LLMClient
+from app.services.net import force_ipv4
 from app.services.storage import LocalStorageService
 
 logger = logging.getLogger(__name__)
@@ -102,10 +103,11 @@ class EmailIngestionService:
 
         results = []
         try:
-            if self.use_ssl:
-                mail = imaplib.IMAP4_SSL(self.host, self.port)
-            else:
-                mail = imaplib.IMAP4(self.host, self.port)
+            with force_ipv4():
+                if self.use_ssl:
+                    mail = imaplib.IMAP4_SSL(self.host, self.port)
+                else:
+                    mail = imaplib.IMAP4(self.host, self.port)
             mail.login(self.user, self.password)
             mail.select("INBOX")
 

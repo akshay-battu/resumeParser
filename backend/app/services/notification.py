@@ -6,6 +6,8 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import formataddr
 
+from app.services.net import force_ipv4
+
 logger = logging.getLogger(__name__)
 
 
@@ -86,7 +88,7 @@ class SMTPNotificationService(NotificationService):
             msg["To"] = recipient
             msg.attach(MIMEText(message, "plain", "utf-8"))
 
-            with smtplib.SMTP(self.host, self.port, timeout=30) as server:
+            with force_ipv4(), smtplib.SMTP(self.host, self.port, timeout=30) as server:
                 if self.use_tls:
                     server.starttls()
                 if self.user and self.password:
