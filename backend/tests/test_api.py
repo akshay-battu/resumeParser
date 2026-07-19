@@ -79,7 +79,8 @@ def test_document_request_generation(client, sample_pdf):
 
     assert response.status_code == 200
     body = response.get_json()
-    assert body["message"] == generated["message"]
+    assert body["message"].startswith(generated["message"])
+    assert f"[Ref: RP-{candidate_id}]" in body["message"]
     assert body["channel"] == "email"
 
     logged = DocumentRequest.query.filter_by(candidate_id=candidate_id).first()

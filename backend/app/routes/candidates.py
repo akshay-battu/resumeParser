@@ -8,7 +8,7 @@ from app.extensions import db
 from app.models.candidate import Candidate
 from app.models.document_request import DocumentRequest
 from app.services.document_agent import DocumentRequestAgent
-from app.services.email_ingestion import EmailIngestionService
+from app.services.email_ingestion import EmailIngestionService, reference_tag
 from app.services.llm.base import LLMUnavailableError
 from app.services.llm.factory import get_llm_client
 from app.services.notification import get_notification_service
@@ -263,6 +263,17 @@ def request_documents(candidate_id: int):
 
     recipient = candidate.phone if channel == "sms" else (candidate.email or "")
 
+    subject = f"Document Request — {candidate.name or 'Candidate'} KYC Verification"
+    if channel == "email":
+        # Embed a reference tag so a reply can be matched back to this exact
+        # candidate row — email addresses aren't unique across candidates (typos,
+        # re-applications), so the auto-attach listener needs something more
+        # precise than "whoever has this email" to avoid attaching to the wrong
+        # profile. Carried in both subject and body in case a client mangles one.
+        tag = reference_tag(candidate.id)
+        subject = f"{subject} {tag}"
+        message = f"{message}\n\n{tag} Please keep this reference in your reply."
+
     doc_request = DocumentRequest(
         candidate_id=candidate.id,
         message=message,
@@ -274,7 +285,6 @@ def request_documents(candidate_id: int):
     db.session.commit()
 
     notifier = get_notification_service(current_app.config)
-    subject = f"Document Request — {candidate.name or 'Candidate'} KYC Verification"
     send_result = notifier.send(channel, recipient, message, subject=subject)
 
     from datetime import datetime, timezone
