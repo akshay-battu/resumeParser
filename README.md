@@ -31,6 +31,7 @@ Copy `.env.example` to `.env` and fill in:
 | Variable | Required | Notes |
 |---|---|---|
 | `GEMINI_API_KEY` | Yes | Powers resume parsing, message drafting, attachment classification |
+| `RESEND_API_KEY` / `RESEND_FROM` | For real email on hosts that block SMTP | Sends via [Resend](https://resend.com)'s HTTPS API instead — takes priority over SMTP when set. Needed on Railway's free/trial tier, which blocks outbound SMTP entirely |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASSWORD` / `SMTP_FROM` | For real email | Gmail: `smtp.gmail.com`, `587`, your address, an App Password, your address |
 | `SMTP_FROM_NAME` | No | Display name shown to candidates (default: "ResumeParser Recruiting") — the address itself can't differ from `SMTP_FROM`, since replies route back to it |
 | `IMAP_HOST` / `IMAP_PORT` / `IMAP_USER` / `IMAP_PASSWORD` | For auto-attach | Same mailbox as SMTP — Gmail: `imap.gmail.com`, `993` |

@@ -19,6 +19,11 @@ class Config:
     GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
     CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:5173")
 
+    # Resend (outbound email over HTTPS — used instead of SMTP when set, since
+    # some hosts block outbound SMTP entirely regardless of any client-side fix)
+    RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
+    RESEND_FROM = os.getenv("RESEND_FROM", "onboarding@resend.dev")
+
     # SMTP (outbound email)
     SMTP_HOST = os.getenv("SMTP_HOST", "")
     SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))

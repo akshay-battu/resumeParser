@@ -1,4 +1,5 @@
 import io
+import urllib.error
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -8,7 +9,11 @@ from app.models.document_request import DocumentRequest
 from app.services.email_ingestion import EmailIngestionService
 from app.services.llm.base import LLMUnavailableError
 from app.services.llm.langchain_gemini import LangChainGeminiClient
-from app.services.notification import SMTPNotificationService, get_notification_service
+from app.services.notification import (
+    ResendNotificationService,
+    SMTPNotificationService,
+    get_notification_service,
+)
 
 MOCK_PARSE_RESULT = {
     "name": "Priya Sharma",
@@ -302,6 +307,46 @@ def test_smtp_notification_service():
         assert res.success is True
         assert res.status == "sent"
         instance.sendmail.assert_called_once()
+
+
+def test_resend_takes_priority_over_smtp():
+    config = {
+        "RESEND_API_KEY": "re_test_key",
+        "SMTP_HOST": "localhost",  # both configured — Resend should win
+    }
+    assert isinstance(get_notification_service(config), ResendNotificationService)
+
+
+def test_resend_notification_service_sends():
+    service = ResendNotificationService({"RESEND_API_KEY": "re_test_key"})
+
+    mock_response = MagicMock()
+    mock_response.read.return_value = b'{"id":"abc"}'
+    mock_response.__enter__.return_value = mock_response
+    with patch("urllib.request.urlopen", return_value=mock_response) as mock_urlopen:
+        res = service.send("email", "recipient@test.com", "Hello candidate", "Verification")
+
+    assert res.success is True
+    assert res.status == "sent"
+    mock_urlopen.assert_called_once()
+
+
+def test_resend_notification_service_handles_api_error():
+    service = ResendNotificationService({"RESEND_API_KEY": "re_test_key"})
+
+    error = urllib.error.HTTPError(
+        url="https://api.resend.com/emails",
+        code=422,
+        msg="Unprocessable",
+        hdrs=None,
+        fp=io.BytesIO(b'{"message":"invalid recipient"}'),
+    )
+    with patch("urllib.request.urlopen", side_effect=error):
+        res = service.send("email", "recipient@test.com", "Hello", "Subject")
+
+    assert res.success is False
+    assert res.status == "failed"
+    assert "422" in res.detail
 
 
 def test_email_ingestion_service(app):
