@@ -139,7 +139,14 @@ class ResendNotificationService(NotificationService):
         req = urllib.request.Request(
             "https://api.resend.com/emails",
             data=payload,
-            headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+                # Resend's API sits behind Cloudflare, which blocks the default
+                # "Python-urllib/x.y" user agent as bot-like (Cloudflare error
+                # 1010) — any non-default value avoids the block.
+                "User-Agent": "ResumeParser/1.0",
+            },
             method="POST",
         )
         try:
