@@ -105,17 +105,22 @@ class SMTPNotificationService(NotificationService):
             return SendResult(success=False, status="failed", detail=str(exc))
 
 
-class ResendNotificationService(NotificationService):
-    """Sends real email via the Resend HTTPS API.
+class SendGridNotificationService(NotificationService):
+    """Sends real email via the SendGrid HTTPS API.
 
     Some hosts (Railway's free/trial tier, notably) block outbound SMTP entirely
     to prevent spam abuse — no client-side fix gets around a platform firewall
     rule. An HTTPS API sidesteps that since port 443 is never blocked.
+
+    Uses SendGrid's Single Sender Verification (verify one email address by
+    clicking a link — no domain/DNS ownership needed) rather than full domain
+    authentication. Unlike Resend's sandbox mode, this only restricts the *from*
+    address — the verified sender can email any recipient, not just themselves.
     """
 
     def __init__(self, config):
-        self.api_key = _cfg(config, "RESEND_API_KEY")
-        self.from_addr = _cfg(config, "RESEND_FROM", "onboarding@resend.dev")
+        self.api_key = _cfg(config, "SENDGRID_API_KEY")
+        self.from_addr = _cfg(config, "SENDGRID_FROM")
         self.from_name = _cfg(config, "SMTP_FROM_NAME")
 
     def send(
@@ -126,25 +131,30 @@ class ResendNotificationService(NotificationService):
         subject: str = "Document Request — ResumeParser KYC",
     ) -> SendResult:
         if channel != "email":
-            return SendResult(success=False, status="stub", detail=f"Channel {channel} not supported via Resend")
+            return SendResult(success=False, status="stub", detail=f"Channel {channel} not supported via SendGrid")
 
         if not recipient:
             return SendResult(success=False, status="failed", detail="No recipient email address")
 
-        from_field = formataddr((self.from_name, self.from_addr)) if self.from_name else self.from_addr
+        from_field = {"email": self.from_addr}
+        if self.from_name:
+            from_field["name"] = self.from_name
+
         payload = json.dumps(
-            {"from": from_field, "to": [recipient], "subject": subject, "text": message}
+            {
+                "personalizations": [{"to": [{"email": recipient}]}],
+                "from": from_field,
+                "subject": subject,
+                "content": [{"type": "text/plain", "value": message}],
+            }
         ).encode("utf-8")
 
         req = urllib.request.Request(
-            "https://api.resend.com/emails",
+            "https://api.sendgrid.com/v3/mail/send",
             data=payload,
             headers={
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json",
-                # Resend's API sits behind Cloudflare, which blocks the default
-                # "Python-urllib/x.y" user agent as bot-like (Cloudflare error
-                # 1010) — any non-default value avoids the block.
                 "User-Agent": "ResumeParser/1.0",
             },
             method="POST",
@@ -152,14 +162,14 @@ class ResendNotificationService(NotificationService):
         try:
             with urllib.request.urlopen(req, timeout=30) as resp:
                 resp.read()
-            logger.info("Email sent to %s via Resend at %s", recipient, datetime.now(timezone.utc).isoformat())
+            logger.info("Email sent to %s via SendGrid at %s", recipient, datetime.now(timezone.utc).isoformat())
             return SendResult(success=True, status="sent", detail=f"Email sent to {recipient}")
         except urllib.error.HTTPError as exc:
             body = exc.read().decode("utf-8", errors="replace")
-            logger.error("Resend send failed: %s %s", exc.code, body)
-            return SendResult(success=False, status="failed", detail=f"Resend API error {exc.code}: {body[:200]}")
+            logger.error("SendGrid send failed: %s %s", exc.code, body)
+            return SendResult(success=False, status="failed", detail=f"SendGrid API error {exc.code}: {body[:200]}")
         except Exception as exc:
-            logger.error("Resend send failed: %s", exc)
+            logger.error("SendGrid send failed: %s", exc)
             return SendResult(success=False, status="failed", detail=str(exc))
 
 
@@ -170,8 +180,8 @@ def _cfg(config, key: str, default: str = "") -> str:
 
 
 def get_notification_service(config) -> NotificationService:
-    if _cfg(config, "RESEND_API_KEY"):
-        return ResendNotificationService(config)
+    if _cfg(config, "SENDGRID_API_KEY"):
+        return SendGridNotificationService(config)
     if _cfg(config, "SMTP_HOST"):
         return SMTPNotificationService(config)
     return StubNotificationService()

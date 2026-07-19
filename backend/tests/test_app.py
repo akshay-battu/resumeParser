@@ -10,7 +10,7 @@ from app.services.email_ingestion import EmailIngestionService
 from app.services.llm.base import LLMUnavailableError
 from app.services.llm.langchain_gemini import LangChainGeminiClient
 from app.services.notification import (
-    ResendNotificationService,
+    SendGridNotificationService,
     SMTPNotificationService,
     get_notification_service,
 )
@@ -309,19 +309,19 @@ def test_smtp_notification_service():
         instance.sendmail.assert_called_once()
 
 
-def test_resend_takes_priority_over_smtp():
+def test_sendgrid_takes_priority_over_smtp():
     config = {
-        "RESEND_API_KEY": "re_test_key",
-        "SMTP_HOST": "localhost",  # both configured — Resend should win
+        "SENDGRID_API_KEY": "sg_test_key",
+        "SMTP_HOST": "localhost",  # both configured — SendGrid should win
     }
-    assert isinstance(get_notification_service(config), ResendNotificationService)
+    assert isinstance(get_notification_service(config), SendGridNotificationService)
 
 
-def test_resend_notification_service_sends():
-    service = ResendNotificationService({"RESEND_API_KEY": "re_test_key"})
+def test_sendgrid_notification_service_sends():
+    service = SendGridNotificationService({"SENDGRID_API_KEY": "sg_test_key", "SENDGRID_FROM": "hr@test.com"})
 
     mock_response = MagicMock()
-    mock_response.read.return_value = b'{"id":"abc"}'
+    mock_response.read.return_value = b""
     mock_response.__enter__.return_value = mock_response
     with patch("urllib.request.urlopen", return_value=mock_response) as mock_urlopen:
         res = service.send("email", "recipient@test.com", "Hello candidate", "Verification")
@@ -331,22 +331,22 @@ def test_resend_notification_service_sends():
     mock_urlopen.assert_called_once()
 
 
-def test_resend_notification_service_handles_api_error():
-    service = ResendNotificationService({"RESEND_API_KEY": "re_test_key"})
+def test_sendgrid_notification_service_handles_api_error():
+    service = SendGridNotificationService({"SENDGRID_API_KEY": "sg_test_key", "SENDGRID_FROM": "hr@test.com"})
 
     error = urllib.error.HTTPError(
-        url="https://api.resend.com/emails",
-        code=422,
-        msg="Unprocessable",
+        url="https://api.sendgrid.com/v3/mail/send",
+        code=403,
+        msg="Forbidden",
         hdrs=None,
-        fp=io.BytesIO(b'{"message":"invalid recipient"}'),
+        fp=io.BytesIO(b'{"errors":[{"message":"does not match a verified Sender Identity"}]}'),
     )
     with patch("urllib.request.urlopen", side_effect=error):
         res = service.send("email", "recipient@test.com", "Hello", "Subject")
 
     assert res.success is False
     assert res.status == "failed"
-    assert "422" in res.detail
+    assert "403" in res.detail
 
 
 def test_email_ingestion_service(app):
